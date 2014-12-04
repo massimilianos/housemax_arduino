@@ -1,6 +1,10 @@
 // INCLUDE PER LO SHIELD ETHERNET
-#include <SPI.h>
 #include <Ethernet.h>
+#include <SPI.h>
+#include <Twitter.h>
+
+// INCLUDE PER LA LIBRERIA WEBDUINO
+#include <WebServer.h>
 
 // INCLUDE PER IL SENSORE DHT11 DI TEMPERATURA ED UMIDITA'
 #include <DHT.h>
@@ -16,175 +20,191 @@ dht DHT;
 #define RELAY_ON 0
 #define RELAY_OFF 1
 
-#define lunghezzaMaxComando 255
-
 // MAC ADDRESS, INDIRIZZO E PORTA DELLO SHIELD ETHERNET
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
 IPAddress ip(192,168,1,134);
-EthernetServer arduinoServer(82);
+WebServer webserver("", 82);
 
-char comandoWeb[lunghezzaMaxComando];
-
-char comando[lunghezzaMaxComando];
-char parametro1[lunghezzaMaxComando];
-char parametro2[lunghezzaMaxComando];
+// COLLEGAMENTO A TWITTER (arduino-tweet.appspot.com)
+Twitter twitter("2896171270-2PPFNbOyzT6Te2n1aKWlic6W0LOh0dQ3G816qd7");
 
 // FLAG CHE INDICA AL SISTEMA SE E' ATTIVO IL CONTROLLO MANUALE DEI RELAY
 int controlloManuale = 0;
 
+// FLAG CHE INDICA AL SISTEMA LA MODALITA' IMPOSTATA (ESTATE O INVERNO)
+// PER DECIDERE SE UTILIZZARE IL CLIMATIZZATORE O IL RISCALDAMENTO
+// 0 = INVERNO
+// 1 = ESTATE
+int modalita = 0;
+
+// VALORE CHE INDICA LA TEMPERATURA CHE DEVE ESSERE PRESENTE NELL'AMBIENTE
+int temperaturaControllo = 0;
+
 // VARIABILI CHE CONTENGONO I VALORI DI TEMPERATURA ED UMIDITA'
-float temperatura = 0;
-float umidita = 0;
+float temperature = 0;
+float temperaturePrec = 0;
+float humidity = 0;
+float humidityPrec = 0;
 
-char* leggiComando(EthernetClient webClient) {
-  int indiceComando = 0;
-  while (webClient.connected()) {
-    if (webClient.available()) {
-      char c = webClient.read();
-      if (c == '\n') {
-        break;
-      } else {
-        comandoWeb[indiceComando] = c;
-        
-        indiceComando++;
-      }
-    }
-  }
-  
-  return(comandoWeb);
-}
-
-void creaComando(EthernetServer arduinoServer) {
-  // IL COMANDO E' DEL TIPO "GET /comando/parametro1/parametro2 HTTP/1.1"
-  
-  char* slash1;
-  char* slash2;
-  char* slash3;
-  char* space2;
-  
-  slash1 = strstr(comandoWeb, "/") + 1;
-  slash2 = strstr(slash1, "/") + 1;
-  slash3 = strstr(slash2, "/") + 1;
-  space2 = strstr(slash2, " ") + 1;
- 
-  if (slash3 > space2) slash3 = slash2;
-
-  comando[0] = 0;
-  parametro1[0] = 0;
-  parametro2[0] = 0;
-  
-  strncat(comando, slash1, slash2 - slash1 - 1);
-  strncat(parametro1, slash2, slash3 - slash2 - 1);
-  strncat(parametro2, slash3, space2 - slash3 - 1);
-}
-
-char* eseguiComando(EthernetServer arduinoServer) {  
-  if (strcmp(comando, "relayOnOff") == 0) {
-    return(relayOnOff(arduinoServer));
-  }
-  
-  if (strcmp(comando, "relayStatusRead") == 0) {
-    return(relayStatusRead(arduinoServer));
-  }
-  
-  if (strcmp(comando, "temperatureRead") == 0) {
-    char tmpString[10];
- 
-    dtostrf(dht11Read(arduinoServer, "temperature"), 2, 2, tmpString);
- 
-    return(tmpString);
-  }
-  
-  if (strcmp(comando, "humidityRead") == 0) {
-    char tmpString[10];
- 
-    dtostrf(dht11Read(arduinoServer, "humidity"), 3, 2, tmpString);
-    
-    return(tmpString);
-  }
-  
-  if (strcmp(comando, "manualControlOnOff") == 0) {
-    return(manualControlOnOff(arduinoServer));
-  }
-}
-
-char* relayOnOff(EthernetServer arduinoServer) {    
-  int numeroRelay = parametro1[0] - '0';
-  int statoRelay = parametro2[0] - '0';
-  
-  digitalWrite(numeroRelay, !statoRelay);
-  
-  arduinoServer.print(statoRelay);
-}
-  
-char* relayStatusRead(EthernetServer arduinoServer) { 
-  int numeroRelay = parametro1[0] - '0';
-  int statoRelay = digitalRead(numeroRelay);
-    
-  arduinoServer.print(!statoRelay);
-}
-  
-char* manualControlOnOff(EthernetServer arduinoServer) {
-  controlloManuale = parametro1[0] - '0';
-  
-  arduinoServer.print("OK");
-}
-
-double dht11Read(EthernetServer arduinoServer, char* tipoSensore) {  
+float dht11Read(char *tipoSensore) {  
   int chk = DHT.read11(DHT11_PIN);
   
   switch (chk) {
     case DHTLIB_OK:  
-//      arduinoServer.print("OK,\t"); 
     break;
     
     case DHTLIB_ERROR_CHECKSUM: 
-//      arduinoServer.print("Checksum error,\t"); 
     break;
     
     case DHTLIB_ERROR_TIMEOUT: 
-//      arduinoServer.print("Time out error,\t"); 
     break;
     
-    default: 
-//      arduinoServer.print("Unknown error,\t"); 
+    default:
     break;
   }
   
-  if (tipoSensore == "temperature") {    
-    temperatura = DHT.temperature;
+  if (tipoSensore == "temperature") {
+    temperature = DHT.temperature;
   
     Serial.print("TEMP: '");
-    Serial.print(temperatura);
+    Serial.print(temperature);
     Serial.println("'");
-  
+    
+    if (temperature < 0 || temperature > 50) {
+      temperature = temperaturePrec;
+    } else {
+      temperaturePrec = temperature;
+    }
+
     if (controlloManuale == 0) {
-      if (temperatura > 22) {
-        digitalWrite(3, 0);
+      if (temperature < temperaturaControllo) {
+        digitalWrite(3, RELAY_ON);
+
+        if (temperature != temperaturePrec) {
+          if (twitter.post("ACCESO RELAY 1!")) {
+            int status = twitter.wait();
+   
+            if (status == 200) {
+              Serial.println("OK.");
+            } else {
+              Serial.print("Codice di errore: ");
+              Serial.println(status);
+            }
+          } else {
+            Serial.println("Connessione fallita");
+          }
+        }
       } else {
-        digitalWrite(3, 1);
+        digitalWrite(3, RELAY_OFF);
+        
+        if (temperature != temperaturePrec) {
+          if (twitter.post("SPENTO RELAY 1!")) {
+            int status = twitter.wait();
+   
+            if (status == 200) {
+              Serial.println("OK.");
+            } else {
+              Serial.print("Codice di errore: ");
+              Serial.println(status);
+            }
+          } else {
+            Serial.println("Connessione fallita");
+          }
+        }
       }
     }
-  
-    arduinoServer.print(temperatura);
-  } else {
-    umidita = DHT.humidity;
+
+    return(temperature);
+  } else if (tipoSensore == "humidity") {
+    humidity = DHT.humidity;
     
     Serial.print("UMID: '");
-    Serial.print(umidita);
+    Serial.print(humidity);
     Serial.println("'");
   
-    arduinoServer.print(umidita);
+    if (humidity < 20 || humidity > 80) {
+      humidity = humidityPrec;
+    } else {  
+      humidityPrec = humidity;
+    }
+  
+    return(humidity);
   }
 }
 
-void setup() {  
-  Ethernet.begin(mac, ip);
-  
-  arduinoServer.begin();
+void Start(WebServer &server, WebServer::ConnectionType type, char *url_param, bool param_complete) {
+  server.httpSuccess();
+ 
+  if (type != WebServer::HEAD) {
+    String comando = "";
+ 
+    if (param_complete == true) {
+      comando = url_param;
+      
+      Serial.print("comando: '");
+      Serial.print(comando);
+      Serial.println("'");
+      
+      if (comando == "ReadModalita") {
+        server.print(modalita);
+      } else if (comando.startsWith("SetModalita")) {
+        int lengthComando = comando.length();
+        String modalitaString = comando.substring(comando.indexOf("=") + 1, lengthComando);
+        modalita = modalitaString.toInt();    
+      } else if (comando == "ReadManualControl") {
+        server.print(controlloManuale);
+      } else if (comando == "ManualControl=ON") {
+        controlloManuale = 1;
+      } else if (comando == "ManualControl=OFF") {
+        controlloManuale = 0;
+      } else if (comando == "Relay1=ON") {
+        digitalWrite(3, RELAY_ON);
+      } else if (comando == "Relay1=OFF") {
+        digitalWrite(3, RELAY_OFF);
+      } else if (comando == "Relay2=ON") {
+        digitalWrite(4, RELAY_ON);
+      } else if (comando == "Relay2=OFF") {
+        digitalWrite(4, RELAY_OFF);
+      } else if (comando == "Relay3=ON") {
+        digitalWrite(5, RELAY_ON);
+      } else if (comando == "Relay3=OFF") {
+        digitalWrite(5, RELAY_OFF);
+      } else if (comando == "Relay4=ON") {
+        digitalWrite(6, RELAY_ON);
+      } else if (comando == "Relay4=OFF") {
+        digitalWrite(6, RELAY_OFF);
+      } else if (comando == "TemperatureRead") {
+        temperature = dht11Read("temperature");
+        server.print((int)temperature);
+      } else if (comando == "HumidityRead") {
+        humidity = dht11Read("humidity");
+        server.print((int)humidity);
+      } else if (comando.startsWith("RelayStatus")) {
+        int lengthComando = comando.length();
+        String relayNumberString = comando.substring(comando.indexOf("=") + 1, lengthComando);
+        int relayNumber = relayNumberString.toInt() + 2;
+        int statoRelay = digitalRead(relayNumber);
+        server.print(!statoRelay);
+      } else if (comando == "ReadTempControl") {
+        server.print(temperaturaControllo);
+      } else if (comando.startsWith("SetTempControl")) {
+        int lengthComando = comando.length();
+        String temperaturaControlloString = comando.substring(comando.indexOf("=") + 1, lengthComando);
+        temperaturaControllo = temperaturaControlloString.toInt();        
+      }
+    }
+  }
+}
 
-  Serial.begin(9600);
-  
+void setup() {
+  Ethernet.begin(mac, ip);
+
+  webserver.setDefaultCommand(&Start);
+  webserver.addCommand("index.htm", &Start);
+  webserver.begin();
+ 
+  delay(100);
+ 
   pinMode(3, OUTPUT);
   pinMode(4, OUTPUT);
   pinMode(5, OUTPUT);
@@ -194,25 +214,17 @@ void setup() {
   digitalWrite(4, 1);
   digitalWrite(5, 1);
   digitalWrite(6, 1);
+    
+  modalita = 0;
+  controlloManuale = 0;
+  temperaturaControllo = 22;
+  
+  Serial.begin(9600);
   
   Serial.print("IP = ");
   Serial.println(Ethernet.localIP());
 }
-
+ 
 void loop() {
-  EthernetClient webClient;
-  
-  webClient = arduinoServer.available();
-  if (webClient) {
-    leggiComando(webClient);
-    
-    String tmpStr(comandoWeb); 
-    tmpStr.trim();
-     if (tmpStr.length() > 0) {
-      creaComando(arduinoServer);
-      eseguiComando(arduinoServer);
-    }
-    
-    webClient.stop();
-  }
+  webserver.processConnection();
 }
