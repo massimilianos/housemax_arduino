@@ -29,8 +29,12 @@ dht DHT;
 // MAC ADDRESS, INDIRIZZO E PORTA DELLO SHIELD ETHERNET
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
 IPAddress ip(192,168,1,134);
-WebServer webserver("", 82);
+IPAddress dns_google(8,8,8,8);
+IPAddress gateway(192,168,1,254);
+IPAddress subnet(255,255,255,0);
 
+// PORTA DI ASCOLTO DEL SERVER WEBDUINO
+WebServer webserver("", 82);
 
 // VARIABILI E COSTANTI RELATIVE AL TEMPO
 EthernetUDP Udp;
@@ -325,24 +329,10 @@ void Start(WebServer &server, WebServer::ConnectionType type, char *url_param, b
         temperature = dht11Read("temperature");
         
         server.print((int)temperature);
-        
-        if (timeStatus() != timeNotSet) {
-          if (now() != prevDisplay) {
-            prevDisplay = now();
-            digitalClockDisplay();
-          }
-        }
       } else if (comando == "HumidityRead") {
         humidity = dht11Read("humidity");
         
         server.print((int)humidity);
-        
-        if (timeStatus() != timeNotSet) {
-          if (now() != prevDisplay) {
-            prevDisplay = now();
-            digitalClockDisplay();
-          }
-        }
       } else if (comando.startsWith("RelayStatus")) {
         int lengthComando = comando.length();
         String relayNumberString = comando.substring(comando.indexOf("=") + 1, lengthComando);
@@ -364,8 +354,8 @@ void Start(WebServer &server, WebServer::ConnectionType type, char *url_param, b
 }
 
 void setup() {
-//  Ethernet.begin(mac, ip);
-  Ethernet.begin(mac);
+  Ethernet.begin(mac, ip, dns_google, gateway, subnet);
+//  Ethernet.begin(mac);
   
   Serial.begin(9600);
   
@@ -398,4 +388,11 @@ void setup() {
  
 void loop() {
   webserver.processConnection();
+  
+  if (timeStatus() != timeNotSet) {
+    if (now() != prevDisplay) {
+      prevDisplay = now();
+      digitalClockDisplay();
+    }
+  }
 }
